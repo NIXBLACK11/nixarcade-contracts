@@ -6,5 +6,4 @@ pub enum GameError {
     GameFull,
     #[msg("Invalid player count for the selected game type!")]
     InvalidPlayerCount,
-
 }
