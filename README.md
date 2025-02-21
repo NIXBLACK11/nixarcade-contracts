@@ -1,6 +1,7 @@
 Setup
 
 spl-token create-account So11111111111111111111111111111111111111112 --owner 6iTLyzNKRfprK2njGTubCxdWMvJgu4LFH3V6Kht4Tn2a
+spl-token create-account So11111111111111111111111111111111111111112
 
 async function deriveEscrowTokenAccount(gameAccount) {
     const wsolMint = new PublicKey("So11111111111111111111111111111111111111112");

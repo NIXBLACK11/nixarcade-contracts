@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer, CloseAccount};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer, CloseAccount, SetAuthority};
 use solana_program::system_instruction;
 use solana_program::program::{invoke, invoke_signed};
 use anchor_spl::associated_token::AssociatedToken;
@@ -13,9 +13,9 @@ pub mod error;
 use crate::{state::*, constant::*, helper::*, error::*};
 
 const WSOL_MINT_ADDRESS: &str = "So11111111111111111111111111111111111111112"; // WSOL Mint
-const ADMIN_PUBKEY: &str = "YourAdminPubKeyHere"; // Replace with actual admin pubkey
+const ADMIN_PUBKEY: &str = "FhNZ5dafuzZLQXixkvRd2FP4XsDvmPyzaHnQwEtA1mPT"; // Replace with actual admin pubkey
 
-declare_id!("F6gFgjMZZ9VK26X1uhAtqNV7K92LvxyWjE1L6B4W9vrV");
+declare_id!("GYF4HijcsfJYEpnxhrdMhVRz9X5xUoQ7P2ku9wzHyR8t");
 
 #[program]
 pub mod game {
@@ -95,10 +95,17 @@ pub mod game {
         Ok(())
     }
 
-    pub fn set_winner(ctx: Context<SetWinner>, game_type: String, game_code: String, winner_color: String) -> Result<()> {
-        let game_account = &ctx.accounts.game_account;
+    pub fn set_winner(
+        ctx: Context<SetWinner>,
+        game_type: String,
+        game_code: String,
+        winner_color: String,
+    ) -> Result<()> {
+        let game_account = &mut ctx.accounts.game_account;
         let escrow_token_account = &ctx.accounts.escrow_token_account;
-        let winner = &ctx.accounts.winner;
+        let winner_destination = &ctx.accounts.winner_destination;
+
+        // Find the winner based on color
         let mut found_winner = Pubkey::default();
         for i in 0..(game_account.players_joined as usize) {
             if game_account.player_colors[i] == winner_color {
@@ -107,32 +114,60 @@ pub mod game {
             }
         }
         require!(found_winner != Pubkey::default(), GameError::InvalidWinnerColor);
-        require!(winner.key() == found_winner, GameError::WinnerMismatch);
-        // Use game_account PDA as authority to close the escrow and unwrap WSOL to SOL
+        require!(winner_destination.key() == found_winner, GameError::WinnerMismatch);
+
+        // Store the winner in the game account
+        game_account.game_winner_pubkey = found_winner;
+
+        // PDA Signer Seeds
         let seeds = &[
             GAME_TAG,
             game_type.as_bytes(),
             game_code.as_bytes(),
-            &[ctx.bumps.game_account]
+            &[ctx.bumps.game_account],
         ];
         let signer = &[&seeds[..]];
-        let close_ix = spl_token::instruction::close_account(
-            &spl_token::ID,
-            &escrow_token_account.key(),
-            &winner.key(),
-            &game_account.key(),
-            &[]
-        )?;
-        invoke_signed(
-            &close_ix,
-            &[
-                escrow_token_account.to_account_info(),
-                winner.to_account_info(),
-                game_account.to_account_info(),
+
+        // ✅ Fix: Corrected `set_authority` usage
+        token::set_authority(
+            CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
-            ],
-            signer,
+                SetAuthority {
+                    current_authority: ctx.accounts.admin.to_account_info(),
+                    account_or_mint: escrow_token_account.to_account_info(),
+                },
+            ),
+            token::spl_token::instruction::AuthorityType::AccountOwner,
+            Some(game_account.key()), // ✅ Removed extra `&`
         )?;
+
+        // ✅ Transfer WSOL to the winner
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: escrow_token_account.to_account_info(),
+                    to: winner_destination.to_account_info(),
+                    authority: game_account.to_account_info(),
+                },
+                signer,
+            ),
+            escrow_token_account.amount,
+        )?;
+
+        // ✅ Close the WSOL escrow after transferring funds
+        token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                CloseAccount {
+                    account: escrow_token_account.to_account_info(),
+                    destination: winner_destination.to_account_info(),
+                    authority: game_account.to_account_info(),
+                },
+                signer,
+            ),
+        )?;
+
         Ok(())
     }
 }
@@ -196,16 +231,30 @@ pub struct JoinGame<'info> {
 pub struct SetWinner<'info> {
     #[account(mut, address = Pubkey::from_str(ADMIN_PUBKEY).unwrap())]
     pub admin: Signer<'info>,
+
     #[account(
         mut,
         seeds = [GAME_TAG, game_type.as_bytes(), game_code.as_bytes()],
         bump,
     )]
     pub game_account: Box<Account<'info, GameAccount>>,
-    #[account(mut)]
+
+    #[account(
+        mut,
+        constraint = escrow_token_account.owner == game_account.key(),
+        constraint = escrow_token_account.amount > 0 @ GameError::EmptyEscrow
+    )]
     pub escrow_token_account: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pub winner: SystemAccount<'info>,
+
+    #[account(
+        mut,
+        constraint = winner_destination.mint == escrow_token_account.mint,
+        constraint = winner_destination.owner == game_account.game_winner_pubkey
+    )]
+    pub winner_destination: Account<'info, TokenAccount>,
+
     pub token_program: Program<'info, Token>,
+
     pub system_program: Program<'info, System>,
 }
+
