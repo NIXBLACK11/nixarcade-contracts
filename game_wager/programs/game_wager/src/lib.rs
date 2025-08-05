@@ -21,4 +21,8 @@ pub mod game_wager {
     pub fn join_game(ctx: Context<JoinGame>, game_code: u8, game_type: u8) -> Result<()> {
         _join_game(ctx, game_code, game_type)
     }
+
+    pub fn end_game(ctx: Context<EndGame>, game_code: u8, game_type: u8, winner: Pubkey) -> Result<()> {
+        _end_game(ctx, game_code, game_type, winner)
+    }
 }

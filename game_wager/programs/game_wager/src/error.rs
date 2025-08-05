@@ -15,5 +15,7 @@ pub enum GameError {
     #[msg("Invalid game data provided in final instruction")]
     GameDataMismatch,
     #[msg("Invalid number of players")]
-    InvaildNumberPlayers
+    InvaildNumberPlayers,
+    #[msg("First player account does not match game creator")]
+    FirstPlayerMismatch,
 }

@@ -199,4 +199,48 @@ describe("game_wager", () => {
     const tttGameData = await program.account.game.fetch(tttGameAccount);
     assert.equal(tttGameData.playerIndex, 2, "TicTacToe should have exactly 2 players");
   });
+
+  it("should end the game and pay out the winner, closing the game account", async () => {
+    const winner = secondPlayer.publicKey;
+
+    const gameDataBefore = await program.account.game.fetch(gameAccount);
+    const wager = gameDataBefore.wager;
+    const numPlayers = gameDataBefore.numPlayers;
+
+    const winnerBalanceBefore = await program.provider.connection.getBalance(winner);
+    const firstPlayerBalanceBefore = await program.provider.connection.getBalance(firstPlayer.publicKey);
+
+    await program.methods
+      .endGame(gameCode, gameType, winner)
+      .accounts({
+        signer: firstPlayer.publicKey,
+        winner: winner,
+        gameAccount: gameAccount,
+        firstPlayer: firstPlayer.publicKey,
+      })
+      .signers([firstPlayer])
+      .rpc();
+
+    const winnerBalanceAfter = await program.provider.connection.getBalance(winner);
+    const firstPlayerBalanceAfter = await program.provider.connection.getBalance(firstPlayer.publicKey);
+
+    const payout = winnerBalanceAfter - winnerBalanceBefore;
+    const rentRefund = firstPlayerBalanceAfter - firstPlayerBalanceBefore;
+    const expectedPayout = wager.toNumber() * numPlayers;
+
+    assert.isAtLeast(
+      payout,
+      expectedPayout,
+      `Winner payout should be at least numPlayers * wager (expected: ${expectedPayout}, got: ${payout})`
+    );
+    assert.isAtMost(
+      payout,
+      expectedPayout,
+      `Winner payout should be at most numPlayers * wager (expected: ${expectedPayout}, got: ${payout})`
+    );
+    assert.isTrue(
+      rentRefund > 0,
+      "First player should have received the rent-exempt lamports from the closed game account"
+    );
+  });
 });
