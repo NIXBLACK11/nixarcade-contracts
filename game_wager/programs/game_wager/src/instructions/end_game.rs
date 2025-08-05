@@ -30,12 +30,12 @@ pub fn _end_game(
     game_type: u8,
     winner: Pubkey,
 ) -> Result<()> {
-    let signer = ctx.accounts.signer.key();
+    let signer = &ctx.accounts.signer;
     let game_account = &ctx.accounts.game_account;
     let winner_account = &ctx.accounts.winner;
     let first_player = &ctx.accounts.first_player;
 
-    require!(is_valid_game_authority(&signer), GameError::NotAuthorized);
+    require!(is_valid_game_authority(&signer.key()), GameError::NotAuthorized);
 
     require!(game_account.players[0] == first_player.key(), GameError::FirstPlayerMismatch);
 
@@ -45,8 +45,12 @@ pub fn _end_game(
     let rent_exempt = Rent::get()?.minimum_balance(game_account.to_account_info().data_len());
     let amount = lamports.saturating_sub(rent_exempt);
 
+    let authority_fee = amount * 5 / 100;
+    let winner_amount = amount - authority_fee;
+
     **game_account.to_account_info().try_borrow_mut_lamports()? -= amount;
-    **winner_account.to_account_info().try_borrow_mut_lamports()? += amount;
+    **winner_account.to_account_info().try_borrow_mut_lamports()? += winner_amount;
+    **signer.to_account_info().try_borrow_mut_lamports()? += authority_fee;
 
     Ok(())
 }

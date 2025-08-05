@@ -283,6 +283,8 @@ describe("game_wager", () => {
 
     const secret = JSON.parse(fs.readFileSync("authority1.json", "utf-8"));
     const authority1 = anchor.web3.Keypair.fromSecretKey(Uint8Array.from(secret));
+    const authorityBalanceBefore = await program.provider.connection.getBalance(authority1.publicKey);
+
     const sig = await program.provider.connection.requestAirdrop(
       authority1.publicKey,
       2 * anchor.web3.LAMPORTS_PER_SOL
@@ -302,20 +304,35 @@ describe("game_wager", () => {
 
     const winnerBalanceAfter = await program.provider.connection.getBalance(winner);
     const firstPlayerBalanceAfter = await program.provider.connection.getBalance(firstPlayer.publicKey);
+    const authorityBalanceAfter = await program.provider.connection.getBalance(authority1.publicKey);
+
+    const totalPot = wager.toNumber() * numPlayers;
+    const authorityFee = Math.floor(totalPot * 0.05);
+    const expectedWinnerPayout = totalPot - authorityFee;
 
     const payout = winnerBalanceAfter - winnerBalanceBefore;
+    const authorityPayout = authorityBalanceAfter - authorityBalanceBefore;
     const rentRefund = firstPlayerBalanceAfter - firstPlayerBalanceBefore;
-    const expectedPayout = wager.toNumber() * numPlayers;
 
     assert.isAtLeast(
       payout,
-      expectedPayout,
-      `Winner payout should be at least numPlayers * wager (expected: ${expectedPayout}, got: ${payout})`
+      expectedWinnerPayout,
+      `Winner payout should be at least 95% of the pot (expected: ${expectedWinnerPayout}, got: ${payout})`
     );
     assert.isAtMost(
       payout,
-      expectedPayout,
-      `Winner payout should be at most numPlayers * wager (expected: ${expectedPayout}, got: ${payout})`
+      expectedWinnerPayout,
+      `Winner payout should be at most 95% of the pot (expected: ${expectedWinnerPayout}, got: ${payout})`
+    );
+    assert.isAtLeast(
+      authorityPayout,
+      authorityFee,
+      `Authority payout should be at least 5% of the pot (expected: ${authorityFee}, got: ${authorityPayout})`
+    );
+    assert.isAtMost(
+      authorityPayout,
+      authorityFee,
+      `Authority payout should be at most 5% of the pot (expected: ${authorityFee}, got: ${authorityPayout})`
     );
     assert.isTrue(
       rentRefund > 0,
