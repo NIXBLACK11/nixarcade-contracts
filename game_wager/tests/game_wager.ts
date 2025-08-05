@@ -2,6 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { GameWager } from "../target/types/game_wager";
 import { assert } from "chai";
+import fs from "fs";
 
 describe("game_wager", () => {
   anchor.setProvider(anchor.AnchorProvider.env());
@@ -130,7 +131,6 @@ describe("game_wager", () => {
 
 
   it("should not allow more than max players to join", async () => {
-    // Fifth player tries to join
     const fifthPlayer = anchor.web3.Keypair.generate();
     const sig = await program.provider.connection.requestAirdrop(
       fifthPlayer.publicKey,
@@ -200,6 +200,77 @@ describe("game_wager", () => {
     assert.equal(tttGameData.playerIndex, 2, "TicTacToe should have exactly 2 players");
   });
 
+  it("should not allow a non-authority (player) to end the game", async () => {
+    try {
+      await program.methods
+        .endGame(gameCode, gameType, secondPlayer.publicKey)
+        .accounts({
+          signer: secondPlayer.publicKey,
+          winner: secondPlayer.publicKey,
+          gameAccount: gameAccount,
+          firstPlayer: firstPlayer.publicKey,
+        })
+        .signers([secondPlayer])
+        .rpc();
+      assert.fail("Should have thrown an error - non-authority tried to end the game");
+    } catch (err) {
+      assert.include(err.toString(), "NotAuthorized");
+    }
+  });
+
+  it("should not allow a random pubkey (not a player, not an authority) to end the game", async () => {
+    const randomKeypair = anchor.web3.Keypair.generate();
+    const sig = await program.provider.connection.requestAirdrop(
+      randomKeypair.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await program.provider.connection.confirmTransaction(sig);
+
+    try {
+      await program.methods
+        .endGame(gameCode, gameType, secondPlayer.publicKey)
+        .accounts({
+          signer: randomKeypair.publicKey,
+          winner: secondPlayer.publicKey,
+          gameAccount: gameAccount,
+          firstPlayer: firstPlayer.publicKey,
+        })
+        .signers([randomKeypair])
+        .rpc();
+      assert.fail("Should have thrown an error - random pubkey tried to end the game");
+    } catch (err) {
+      assert.include(err.toString(), "NotAuthorized");
+    }
+  });
+  
+  it("should not allow ending the game with an invalid winner", async () => {
+    const secret = JSON.parse(fs.readFileSync("authority1.json", "utf-8"));
+    const authority1 = anchor.web3.Keypair.fromSecretKey(Uint8Array.from(secret));
+    const sig = await program.provider.connection.requestAirdrop(
+      authority1.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await program.provider.connection.confirmTransaction(sig);
+
+    const notAPlayer = anchor.web3.Keypair.generate();
+
+    try {
+      await program.methods
+        .endGame(gameCode, gameType, notAPlayer.publicKey)
+        .accounts({
+          signer: authority1.publicKey,
+          winner: notAPlayer.publicKey,
+          gameAccount: gameAccount,
+          firstPlayer: firstPlayer.publicKey,
+        })
+        .signers([authority1])
+        .rpc();
+      assert.fail("Should have thrown an error - invalid winner");
+    } catch (err) {
+      assert.include(err.toString(), "InvalidWinner");
+    }
+  });
+
   it("should end the game and pay out the winner, closing the game account", async () => {
     const winner = secondPlayer.publicKey;
 
@@ -210,15 +281,23 @@ describe("game_wager", () => {
     const winnerBalanceBefore = await program.provider.connection.getBalance(winner);
     const firstPlayerBalanceBefore = await program.provider.connection.getBalance(firstPlayer.publicKey);
 
+    const secret = JSON.parse(fs.readFileSync("authority1.json", "utf-8"));
+    const authority1 = anchor.web3.Keypair.fromSecretKey(Uint8Array.from(secret));
+    const sig = await program.provider.connection.requestAirdrop(
+      authority1.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await program.provider.connection.confirmTransaction(sig);
+
     await program.methods
       .endGame(gameCode, gameType, winner)
       .accounts({
-        signer: firstPlayer.publicKey,
+        signer: authority1.publicKey,
         winner: winner,
         gameAccount: gameAccount,
         firstPlayer: firstPlayer.publicKey,
       })
-      .signers([firstPlayer])
+      .signers([authority1])
       .rpc();
 
     const winnerBalanceAfter = await program.provider.connection.getBalance(winner);

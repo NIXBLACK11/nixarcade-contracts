@@ -18,4 +18,6 @@ pub enum GameError {
     InvaildNumberPlayers,
     #[msg("First player account does not match game creator")]
     FirstPlayerMismatch,
+    #[msg("This account is not authorized to close the game")]
+    NotAuthorized,
 }
